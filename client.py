@@ -114,6 +114,7 @@ class FlowerClient(NumPyClient):
         criterion = nn.CrossEntropyLoss()
         optimizer = optim.Adam(self.net.parameters(), lr=0.005)
         self.net.train()
+        i=0
         for epoch in range(5):
             for inputs, labels in self.trainloader:
                 inputs, labels = inputs.to(DEVICE), labels.to(DEVICE)
@@ -123,9 +124,24 @@ class FlowerClient(NumPyClient):
                     mask1 = (labels == torch.tensor([1., 0., 0.], dtype=torch.float64)).all(dim=1)
                     # Trova le righe che corrispondono a [0., 1., 0.]
                     mask2 = (labels == torch.tensor([0., 1., 0.], dtype=torch.float64)).all(dim=1)
-                    # Sostituisci [1., 0., 0.] con [0., 1., 0.] e viceversa
-                    labels[mask1] = torch.tensor([0., 1., 0.], dtype=torch.float64)
-                    labels[mask2] = torch.tensor([1., 0., 0.], dtype=torch.float64)
+                    # Trova le righe che corrispondono a [0., 0., 1.]
+                    mask3 = (labels == torch.tensor([0., 0., 1.], dtype=torch.float64)).all(dim=1)
+                    if i==0:
+                        # Sostituisci [1., 0., 0.] con [0., 1., 0.] e viceversa e [0., 0., 1.] con [1., 0., 0.]
+                        labels[mask1] = torch.tensor([0., 1., 0.], dtype=torch.float64)
+                        labels[mask2] = torch.tensor([1., 0., 0.], dtype=torch.float64)
+                        labels[mask3] = torch.tensor([1., 0., 0.], dtype=torch.float64)
+                    elif i==1:
+                        # Sostituisci [1., 0., 0.] con [0., 0., 1.] e viceversa e [0., 0., 1.] con [1., 0., 0.]
+                        labels[mask1] = torch.tensor([0., 0., 1.], dtype=torch.float64)
+                        labels[mask2] = torch.tensor([0., 0., 1.], dtype=torch.float64)
+                        labels[mask3] = torch.tensor([1., 0., 0.], dtype=torch.float64)
+                    else:
+                        # Sostituisci [0., 1., 0.] con [0., 0., 1.] e viceversa e [0., 0., 1.] con [0., 1., 0.]
+                        labels[mask1] = torch.tensor([0., 1., 0.], dtype=torch.float64)
+                        labels[mask2] = torch.tensor([0., 0., 1.], dtype=torch.float64)
+                        labels[mask3] = torch.tensor([0., 1., 0.], dtype=torch.float64)
+                i=(i+1)%3
                 optimizer.zero_grad()
                 outputs = self.net(inputs)
                 loss = criterion(outputs, torch.argmax(labels, dim=1))
