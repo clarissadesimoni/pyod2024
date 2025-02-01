@@ -5,6 +5,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from collections import OrderedDict
 from multiprocessing import Process, Manager
 from time import sleep
+import time
 import argparse
 import os
 import pickle
@@ -27,14 +28,16 @@ ROUND = 1
 SEED = 7
 NUM_CLIENTS = 6
 
+TENSOR_SIZE = (50,3)
+
 # Argument parser
 parser = argparse.ArgumentParser(description="Flower Client for Federated Learning")
 parser.add_argument(
     "--mode",
     type=str,
-    choices=["legit", "attack", "poison"],
+    choices=["legit", "attack", "label", "sponge"],
     required=True,
-    help="Specify client mode: 'legit' or 'attack' or 'poison'",
+    help="Specify client mode: 'legit' or 'attack' or 'label' or 'sponge'",
 )
 args = parser.parse_args()
 mode = args.mode
@@ -55,7 +58,6 @@ class CNN1DModel(nn.Module):
         x = torch.softmax(self.fc2(x), dim=1)
         return x
 
-
 class FlowerClient(NumPyClient):
     def __init__(self, client_id, mode, shared_dict, malicious):
         super().__init__()
@@ -66,6 +68,7 @@ class FlowerClient(NumPyClient):
         self.mode = mode
         self.shared_dict = shared_dict
         self.malicious = malicious
+        self.j=1
 
     def get_parameters(self, config):
         return [val.cpu().numpy() for _, val in self.net.state_dict().items()]
@@ -115,35 +118,55 @@ class FlowerClient(NumPyClient):
         optimizer = optim.Adam(self.net.parameters(), lr=0.005)
         self.net.train()
         i=0
+        train_time = time.time()
         for epoch in range(5):
             for inputs, labels in self.trainloader:
                 inputs, labels = inputs.to(DEVICE), labels.to(DEVICE)
-                #Poison mode  - swap labels
-                if self.mode == "poison" and round_num > ROUND:
-                    # Trova le righe che corrispondono a [1., 0., 0.]
-                    mask1 = (labels == torch.tensor([1., 0., 0.], dtype=torch.float64)).all(dim=1)
-                    # Trova le righe che corrispondono a [0., 1., 0.]
-                    mask2 = (labels == torch.tensor([0., 1., 0.], dtype=torch.float64)).all(dim=1)
-                    # Trova le righe che corrispondono a [0., 0., 1.]
-                    mask3 = (labels == torch.tensor([0., 0., 1.], dtype=torch.float64)).all(dim=1)
-                    if i==0:
-                        # Sostituisci [1., 0., 0.] con [0., 1., 0.] e viceversa e [0., 0., 1.] con [1., 0., 0.]
-                        labels[mask1] = torch.tensor([0., 1., 0.], dtype=torch.float64)
-                        labels[mask2] = torch.tensor([1., 0., 0.], dtype=torch.float64)
-                        labels[mask3] = torch.tensor([1., 0., 0.], dtype=torch.float64)
-                    elif i==1:
-                        # Sostituisci [1., 0., 0.] con [0., 0., 1.] e viceversa e [0., 0., 1.] con [1., 0., 0.]
-                        labels[mask1] = torch.tensor([0., 0., 1.], dtype=torch.float64)
-                        labels[mask2] = torch.tensor([0., 0., 1.], dtype=torch.float64)
-                        labels[mask3] = torch.tensor([1., 0., 0.], dtype=torch.float64)
-                    else:
-                        # Sostituisci [0., 1., 0.] con [0., 0., 1.] e viceversa e [0., 0., 1.] con [0., 1., 0.]
-                        labels[mask1] = torch.tensor([0., 1., 0.], dtype=torch.float64)
-                        labels[mask2] = torch.tensor([0., 0., 1.], dtype=torch.float64)
-                        labels[mask3] = torch.tensor([0., 1., 0.], dtype=torch.float64)
-                i=(i+1)%3
+                #Sponge mode - modify dataset
+                if self.mode == "sponge" and round_num > ROUND:
+                    n_poison = 8192
+                    # Crea tensori grandi con valori casuali (consumo memoria)
+                    sponge_data = torch.randn(
+                        (n_poison, *TENSOR_SIZE), 
+                        dtype=DTYPE, 
+                        device=DEVICE)
+                    # Sostituisci gli input originali
+                    inputs = sponge_data
+                    
+                    # Assegna etichette casuali ai dati avvelenati
+                    labels = torch.randint(
+                        0, 3, 
+                        (n_poison, labels.shape[1]), 
+                        device=DEVICE
+                    ).to(DTYPE)
+                # === FINE MODIFICHE ===
                 optimizer.zero_grad()
                 outputs = self.net(inputs)
+                #Poison mode  - swap labels
+                if self.mode == "label" and round_num > ROUND:
+                    # Trova le righe che corrispondono a [1., 0., 0.]
+                    mask1 = (labels == torch.tensor([1., 0., 0.], dtype=DTYPE)).all(dim=1)
+                    # Trova le righe che corrispondono a [0., 1., 0.]
+                    mask2 = (labels == torch.tensor([0., 1., 0.], dtype=DTYPE)).all(dim=1)
+                    # Trova le righe che corrispondono a [0., 0., 1.]
+                    mask3 = (labels == torch.tensor([0., 0., 1.], dtype=DTYPE)).all(dim=1)
+                    if i==0:
+                        # Sostituisci [1., 0., 0.] con [0., 1., 0.] e viceversa e [0., 0., 1.] con [1., 0., 0.]
+                        labels[mask1] = torch.tensor([0., 1., 0.], dtype=DTYPE)
+                        labels[mask2] = torch.tensor([1., 0., 0.], dtype=DTYPE)
+                        labels[mask3] = torch.tensor([1., 0., 0.], dtype=DTYPE)
+                    elif i==1:
+                        # Sostituisci [1., 0., 0.] con [0., 0., 1.] e viceversa e [0., 0., 1.] con [1., 0., 0.]
+                        labels[mask1] = torch.tensor([0., 0., 1.], dtype=DTYPE)
+                        labels[mask2] = torch.tensor([0., 0., 1.], dtype=DTYPE)
+                        labels[mask3] = torch.tensor([1., 0., 0.], dtype=DTYPE)
+                    else:
+                        # Sostituisci [0., 1., 0.] con [0., 0., 1.] e viceversa e [0., 0., 1.] con [0., 1., 0.]
+                        labels[mask1] = torch.tensor([0., 1., 0.], dtype=DTYPE)
+                        labels[mask2] = torch.tensor([0., 0., 1.], dtype=DTYPE)
+                        labels[mask3] = torch.tensor([0., 1., 0.], dtype=DTYPE)
+                    i=(i+1)%3
+                # === FINE MODIFICHE ===
                 loss = criterion(outputs, torch.argmax(labels, dim=1))
                 loss.backward()
                 # Attack mode  - gradient sign flipping
@@ -151,6 +174,9 @@ class FlowerClient(NumPyClient):
                     for _, para in self.net.named_parameters():
                         para.grad.data = -para.grad.data
                 optimizer.step()
+        train_time = time.time() - train_time
+        print(f"tempo impiegato per la {self.j}° fase di train dal client {self.client_id}: {train_time}")
+        self.j+=1
 
     def test(self, loader):
         criterion = nn.CrossEntropyLoss()
@@ -187,7 +213,7 @@ if __name__ == "__main__":
     shared_dict = manager.dict()
     clients = []
     for i in range(NUM_CLIENTS):
-        p = Process(target=client_wrapper, args=(i, shared_dict, mode == "attack"))
+        p = Process(target=client_wrapper, args=(i, shared_dict, mode == "attack" or mode == "label" or mode == "sponge"))
         p.start()
         clients.append(p)
     for client in clients:
