@@ -175,7 +175,7 @@ class FlowerClient(NumPyClient):
                         para.data *= (torch.rand(1).item() * 2)  # Amplificazione casuale
                         noise = torch.randn_like(para.grad.data) * 0.5  
                         para.grad.data += noise # Aggiunta di rumore ai gradienti
-                        para.grad.data *= (torch.rand(1).item() * 2)  # Amplificazione casuale
+                        para.grad.data *= (torch.rand(1).item() * 2)  # Amplificazione casuale  
                 # Attack mode  - gradient sign flipping
                 if self.mode == "attack" and round_num > ROUND:
                     for _, para in self.net.named_parameters():
