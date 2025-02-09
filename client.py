@@ -35,9 +35,9 @@ parser = argparse.ArgumentParser(description="Flower Client for Federated Learni
 parser.add_argument(
     "--mode",
     type=str,
-    choices=["legit", "attack", "label", "sponge"],
+    choices=["legit", "attack", "label", "sponge", "noise"],
     required=True,
-    help="Specify client mode: 'legit' or 'attack' or 'label' or 'sponge'",
+    help="Specify client mode: 'legit' or 'attack' or 'label' or 'sponge' or 'noise'",
 )
 args = parser.parse_args()
 mode = args.mode
@@ -139,7 +139,6 @@ class FlowerClient(NumPyClient):
                         (n_poison, labels.shape[1]), 
                         device=DEVICE
                     ).to(DTYPE)
-                # === FINE MODIFICHE ===
                 optimizer.zero_grad()
                 outputs = self.net(inputs)
                 #Poison mode  - swap labels
@@ -169,10 +168,18 @@ class FlowerClient(NumPyClient):
                 # === FINE MODIFICHE ===
                 loss = criterion(outputs, torch.argmax(labels, dim=1))
                 loss.backward()
+                if self.mode == "noise" and round_num > ROUND:
+                    for _, para in self.net.named_parameters():
+                        noise = torch.randn_like(para) * 0.5 
+                        para.data += noise # Aggiunta di rumore ai pesi
+                        para.data *= (torch.rand(1).item() * 2)  # Amplificazione casuale
+                        noise = torch.randn_like(para.grad.data) * 0.5  
+                        para.grad.data += noise # Aggiunta di rumore ai gradienti
+                        para.grad.data *= (torch.rand(1).item() * 2)  # Amplificazione casuale
                 # Attack mode  - gradient sign flipping
                 if self.mode == "attack" and round_num > ROUND:
                     for _, para in self.net.named_parameters():
-                        para.grad.data = -para.grad.data
+                        para.grad.data = -para.grad.data  
                 optimizer.step()
         train_time = time.time() - train_time
         print(f"tempo impiegato per la {self.j}° fase di train dal client {self.client_id}: {train_time}")
@@ -195,7 +202,6 @@ class FlowerClient(NumPyClient):
         accuracy = correct / total
         return loss, accuracy
 
-
 def countdown(t):
     for i in range(t, 0, -1):
         print(i)
@@ -213,7 +219,8 @@ if __name__ == "__main__":
     shared_dict = manager.dict()
     clients = []
     for i in range(NUM_CLIENTS):
-        p = Process(target=client_wrapper, args=(i, shared_dict, mode == "attack" or mode == "label" or mode == "sponge"))
+        p = Process(target=client_wrapper, args=(i, shared_dict, mode == "attack" or mode == "label" or mode == "sponge"
+                                                 or mode == "noise"))
         p.start()
         clients.append(p)
     for client in clients:
